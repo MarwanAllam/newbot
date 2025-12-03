@@ -1,78 +1,65 @@
+# api/index.py
+import os
+import json
+from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes
 )
-from fastapi import FastAPI, Request
-import asyncio
-import json
 
-# 🔑 التوكن مدمج مباشرة (تم جلبه من الكود الذي أرسلته)
-TOKEN = "8427063575:AAGyQSTbjGHOrBHhZeVucVnNWc47amwR7RA"
+# جلب التوكن من متغير بيئي
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+if not TOKEN:
+    raise RuntimeError("Missing TELEGRAM_TOKEN environment variable")
 
 # ----------------------------------------------------
-# 📌 الحالة العامة (Global State) - يجب أن تبقى في المستوى الأعلى
+# Global state
 # ----------------------------------------------------
 queues = {}
 awaiting_input = {}
 
 # ----------------------------------------------------
-# ⚙️ الدوال المساعدة ومعالجات الأوامر (Handlers)
-# (تم نسخها بالكامل من ملفك telegram-bot.py)
+# Helpers / Handlers
 # ----------------------------------------------------
-
 def make_main_keyboard(chat_id):
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📝 انضم / انسحب", callback_data=f"join|{chat_id}")
-        ],
+        [InlineKeyboardButton("📝 انضم / انسحب", callback_data=f"join|{chat_id}")],
         [
             InlineKeyboardButton("🗑️ ريموف", callback_data=f"remove_menu|{chat_id}"),
             InlineKeyboardButton("🔒 إنهاء الدور", callback_data=f"close|{chat_id}")
         ],
-        [
-            InlineKeyboardButton("⭐ إدارة المشرفين", callback_data=f"manage_admins|{chat_id}")
-        ]
+        [InlineKeyboardButton("⭐ إدارة المشرفين", callback_data=f"manage_admins|{chat_id}")]
     ])
 
 def is_admin_or_creator(user_id, q):
     return user_id == q["creator"] or user_id in q["admins"]
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-
     if chat_id in queues and not queues[chat_id].get("closed", True):
         await update.message.reply_text("⚠️ فيه دور شغال بالفعل، اقفله الأول قبل تبدأ جديد.")
         return
-
     awaiting_input[chat_id] = {"step": "teacher"}
     await update.message.reply_text("👩‍🏫 اكتب اسم المعلمة:")
-
 
 async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
-
     chat_id = update.effective_chat.id
     user_input = update.message.text.strip()
-
     if chat_id not in awaiting_input:
         return
-
     step = awaiting_input[chat_id]["step"]
-
     if step == "teacher":
         awaiting_input[chat_id]["teacher"] = user_input
         awaiting_input[chat_id]["step"] = "class_name"
         await update.message.reply_text("📘 اكتب اسم الحلقة:")
         return
-
     elif step == "class_name":
         teacher_name = awaiting_input[chat_id]["teacher"]
         class_name = user_input
         creator_name = update.effective_user.full_name
-
         queues[chat_id] = {
             "creator": update.effective_user.id,
             "creator_name": creator_name,
@@ -85,9 +72,7 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "teacher_name": teacher_name,
             "class_name": class_name
         }
-
         del awaiting_input[chat_id]
-
         text = (
             f"👤 *بدأ الدور:* {creator_name}\n"
             f"📚 *اسم المعلمة:* {teacher_name}\n"
@@ -96,14 +81,19 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(text, reply_markup=make_main_keyboard(chat_id), parse_mode="Markdown")
 
-
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not query:
+        return
     data = query.data
     user = query.from_user
     parts = data.split("|")
     action = parts[0]
-    chat_id = int(parts[1])
+    try:
+        chat_id = int(parts[1])
+    except:
+        await query.answer("خطأ في البيانات.")
+        return
     q = queues.get(chat_id)
 
     if not q:
@@ -114,13 +104,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if q["closed"]:
             await query.answer("🚫 التسجيل مقفول.")
             return
-
         q["usernames"][user.id] = user.full_name
-
         if user.id in q["removed"]:
             await query.answer("🚫 تم حذفك من الدور. استنى الدور الجديد.")
             return
-
         if user.id in q["members"]:
             q["members"].remove(user.id)
             if user.id in q["all_joined"]:
@@ -228,7 +215,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(final_text, parse_mode="Markdown")
         del queues[chat_id]
 
-
     elif action == "manage_admins":
         if user.id != q["creator"]:
             await query.answer("🚫 بس اللي بدأ الدور يقدر يدير المشرفين.")
@@ -276,55 +262,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def force_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_name = update.effective_user.full_name
-
     if chat_id in queues:
         del queues[chat_id]
     if chat_id in awaiting_input:
         del awaiting_input[chat_id]
-
     await update.message.reply_text(
         f"🚨 تم قفل أو حذف أي دور مفتوح بواسطة *{user_name}* ✅",
         parse_mode="Markdown"
     )
 
 # ----------------------------------------------------
-# 🏗️ إعداد تطبيق FastAPI والـ Webhook (الإصلاح الجذري)
+# Build Application ONCE (عند استيراد الموديول)
 # ----------------------------------------------------
+application = ApplicationBuilder().token(TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("forceclose", force_close))
+application.add_handler(CallbackQueryHandler(button))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_info))
 
-# بناء تطبيق FastAPI (يجب أن يُسمى app)
+# ----------------------------------------------------
+# FastAPI app (Vercel expects `app`)
+# ----------------------------------------------------
 app = FastAPI()
 
-# 🪝 مسار Webhook (المسار الرئيسي لـ Vercel هو '/')
-@app.post("/")
+@app.post("/api")
 async def telegram_webhook(request: Request):
-    """التعامل مع طلبات الـ Webhook الواردة من Telegram."""
-
-    # 📌 بناء التطبيق وإضافة المعالجات داخل الدالة (لحل مشكلة 401)
-    application = ApplicationBuilder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("forceclose", force_close))
-    application.add_handler(CallbackQueryHandler(button))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_info))
-    
     try:
         data = await request.json()
-    except json.JSONDecodeError:
-        print("Error: Could not decode JSON from request.")
+    except Exception:
         return {"status": "error", "message": "Invalid JSON"}, 400
-
     try:
         update = Update.de_json(data, application.bot)
-        # استخدام معالجة متزامنة لكشف الخطأ (لمنع إخفاء الـ Traceback)
-        await application.process_update(update) 
-        
-        # الرد فوراً بـ 200 OK
+        await application.process_update(update)
         return {"status": "ok"}
     except Exception as e:
-        # إذا حدث أي خطأ في المعالجة، سيتم تسجيله هنا
-        print(f"Error processing update: {e}")
+        print("Error processing update:", e)
         return {"status": "error", "message": str(e)}, 500
 
-# مسار اختبار بسيط
-@app.get("/")
-async def index():
+@app.get("/api")
+async def root():
     return {"message": "Telegram Bot is ready to receive webhooks!"}
