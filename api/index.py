@@ -1,21 +1,25 @@
-import os
-from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes
 )
+from fastapi import FastAPI, Request
+import asyncio
+import os 
+import json # لإظهار أي خطأ في التحليل
 
-# 🔑 التوكن مدمج مباشرة في الكود لضمان قراءته في Vercel (أقل أماناً)
+# 🔑 التوكن مدمج مباشرة لضمان عدم وجود مشكلة 401
 TOKEN = "8427063575:AAGyQSTbjGHOrBHhZeVucVnNWc47amwR7RA"
 
 # ----------------------------------------------------
-# 📌 منطق البوت (تم الإبقاء عليه كما هو)
+# 📌 الحالة العامة (Global State) - يجب أن تبقى في المستوى الأعلى
 # ----------------------------------------------------
-
 queues = {}
 awaiting_input = {}
 
+# ----------------------------------------------------
+# ⚙️ الدوال المساعدة ومعالجات الأوامر (Handlers)
+# ----------------------------------------------------
 
 def make_main_keyboard(chat_id):
     return InlineKeyboardMarkup([
@@ -30,7 +34,6 @@ def make_main_keyboard(chat_id):
             InlineKeyboardButton("⭐ إدارة المشرفين", callback_data=f"manage_admins|{chat_id}")
         ]
     ])
-
 
 def is_admin_or_creator(user_id, q):
     return user_id == q["creator"] or user_id in q["admins"]
@@ -48,6 +51,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (بقية كود collect_info كما هو)
     if not update.message or not update.message.text:
         return
 
@@ -95,6 +99,7 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (بقية كود button كما هو)
     query = update.callback_query
     data = query.data
     user = query.from_user
@@ -285,8 +290,11 @@ async def force_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ----------------------------------------------------
-# 🏗️ إعداد تطبيق البوت و FastAPI لـ Vercel
+# 🏗️ إعداد تطبيق FastAPI والـ Webhook
 # ----------------------------------------------------
+
+# بناء تطبيق FastAPI (يجب أن يُسمى app)
+app = FastAPI()
 
 # بناء تطبيق البوت (application) مرة واحدة
 application = ApplicationBuilder().token(TOKEN).build()
@@ -298,22 +306,28 @@ application.add_handler(CallbackQueryHandler(button))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_info))
 
 
-# 🛑 تطبيق FastAPI الذي سيتعامل مع الـ Webhook (يجب أن يُسمى app)
-app = FastAPI()
-
-# 🪝 مسار Webhook
+# 🪝 مسار Webhook (المسار الرئيسي لـ Vercel هو '/')
 @app.post("/")
 async def telegram_webhook(request: Request):
     """التعامل مع طلبات الـ Webhook الواردة من Telegram."""
     
+    # التأكد من استلام البيانات بصيغة JSON
     try:
         data = await request.json()
+    except json.JSONDecodeError:
+        print("Error: Could not decode JSON from request.")
+        return {"status": "error", "message": "Invalid JSON"}, 400
+
+    # معالجة التحديث باستخدام تطبيق python-telegram-bot
+    try:
         update = Update.de_json(data, application.bot)
+        # يجب استخدام asyncio.create_task لضمان عدم حظر الرد على Vercel
+        asyncio.create_task(application.process_update(update))
         
-        await application.process_update(update)
-        
+        # الرد فوراً على Vercel بـ 200 OK قبل اكتمال المعالجة
         return {"status": "ok"}
     except Exception as e:
+        # إذا حدث أي خطأ في المعالجة، سيتم تسجيله هنا
         print(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}, 500
 
