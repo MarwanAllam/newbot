@@ -5,10 +5,9 @@ from telegram.ext import (
 )
 from fastapi import FastAPI, Request
 import asyncio
-import os 
-import json # لإظهار أي خطأ في التحليل
+import json
 
-# 🔑 التوكن مدمج مباشرة لضمان عدم وجود مشكلة 401
+# 🔑 التوكن مدمج مباشرة (تم جلبه من الكود الذي أرسلته)
 TOKEN = "8427063575:AAGyQSTbjGHOrBHhZeVucVnNWc47amwR7RA"
 
 # ----------------------------------------------------
@@ -19,6 +18,7 @@ awaiting_input = {}
 
 # ----------------------------------------------------
 # ⚙️ الدوال المساعدة ومعالجات الأوامر (Handlers)
+# (تم نسخها بالكامل من ملفك telegram-bot.py)
 # ----------------------------------------------------
 
 def make_main_keyboard(chat_id):
@@ -51,7 +51,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (بقية كود collect_info كما هو)
     if not update.message or not update.message.text:
         return
 
@@ -99,7 +98,6 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (بقية كود button كما هو)
     query = update.callback_query
     data = query.data
     user = query.from_user
@@ -290,41 +288,36 @@ async def force_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ----------------------------------------------------
-# 🏗️ إعداد تطبيق FastAPI والـ Webhook
+# 🏗️ إعداد تطبيق FastAPI والـ Webhook (الإصلاح الجذري)
 # ----------------------------------------------------
 
 # بناء تطبيق FastAPI (يجب أن يُسمى app)
 app = FastAPI()
 
-# بناء تطبيق البوت (application) مرة واحدة
-application = ApplicationBuilder().token(TOKEN).build()
-
-# إضافة المعالجات (Handlers)
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("forceclose", force_close))
-application.add_handler(CallbackQueryHandler(button))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_info))
-
-
 # 🪝 مسار Webhook (المسار الرئيسي لـ Vercel هو '/')
 @app.post("/")
 async def telegram_webhook(request: Request):
     """التعامل مع طلبات الـ Webhook الواردة من Telegram."""
+
+    # 📌 بناء التطبيق وإضافة المعالجات داخل الدالة (لحل مشكلة 401)
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("forceclose", force_close))
+    application.add_handler(CallbackQueryHandler(button))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_info))
     
-    # التأكد من استلام البيانات بصيغة JSON
     try:
         data = await request.json()
     except json.JSONDecodeError:
         print("Error: Could not decode JSON from request.")
         return {"status": "error", "message": "Invalid JSON"}, 400
 
-    # معالجة التحديث باستخدام تطبيق python-telegram-bot
     try:
         update = Update.de_json(data, application.bot)
-        # يجب استخدام asyncio.create_task لضمان عدم حظر الرد على Vercel
-        asyncio.create_task(application.process_update(update))
+        # استخدام معالجة متزامنة لكشف الخطأ (لمنع إخفاء الـ Traceback)
+        await application.process_update(update) 
         
-        # الرد فوراً على Vercel بـ 200 OK قبل اكتمال المعالجة
+        # الرد فوراً بـ 200 OK
         return {"status": "ok"}
     except Exception as e:
         # إذا حدث أي خطأ في المعالجة، سيتم تسجيله هنا
