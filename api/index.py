@@ -6,12 +6,11 @@ from telegram.ext import (
     MessageHandler, filters, ContextTypes
 )
 
-# 🌐 الحصول على التوكن من متغيرات البيئة في Vercel (أكثر أماناً)
-# Vercel ستقوم بتعيين هذا المتغير من إعدادات المشروع لديك
-TOKEN = os.environ.get("TOKEN")
+# 🔑 التوكن مدمج مباشرة في الكود لضمان قراءته في Vercel (أقل أماناً)
+TOKEN = "8427063575:AAGyQSTbjGHOrBHhZeVucVnNWc47amwR7RA"
 
 # ----------------------------------------------------
-# 📌 منطق البوت (Global State and Handlers) - الكود الخاص بك
+# 📌 منطق البوت (تم الإبقاء عليه كما هو)
 # ----------------------------------------------------
 
 queues = {}
@@ -223,7 +222,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{remaining_text}"
         )
 
-        # 🧹 حذف الدور بعد القفل
         await query.message.reply_text(final_text, parse_mode="Markdown")
         del queues[chat_id]
 
@@ -307,14 +305,11 @@ app = FastAPI()
 @app.post("/")
 async def telegram_webhook(request: Request):
     """التعامل مع طلبات الـ Webhook الواردة من Telegram."""
-    if not TOKEN:
-        return {"status": "error", "message": "TOKEN is not set"}, 500
     
     try:
         data = await request.json()
         update = Update.de_json(data, application.bot)
         
-        # معالجة التحديث باستخدام تطبيق python-telegram-bot
         await application.process_update(update)
         
         return {"status": "ok"}
