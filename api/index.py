@@ -6,16 +6,17 @@ from telegram.ext import (
     MessageHandler, filters, ContextTypes
 )
 
-# 🌐 الحصول على التوكن من متغيرات البيئة في Vercel
+# 🌐 الحصول على التوكن من متغيرات البيئة في Vercel (أكثر أماناً)
+# Vercel ستقوم بتعيين هذا المتغير من إعدادات المشروع لديك
 TOKEN = os.environ.get("TOKEN")
 
 # ----------------------------------------------------
-# 📌 منطق البوت (تم نقله إلى دوال باسم *_handler)
+# 📌 منطق البوت (Global State and Handlers) - الكود الخاص بك
 # ----------------------------------------------------
 
-# هنا يتم وضع المتغيرات العالمية الخاصة بحالة البوت
 queues = {}
 awaiting_input = {}
+
 
 def make_main_keyboard(chat_id):
     return InlineKeyboardMarkup([
@@ -31,13 +32,14 @@ def make_main_keyboard(chat_id):
         ]
     ])
 
+
 def is_admin_or_creator(user_id, q):
     return user_id == q["creator"] or user_id in q["admins"]
 
 
-# دالة /start الأصلية
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+
     if chat_id in queues and not queues[chat_id].get("closed", True):
         await update.message.reply_text("⚠️ فيه دور شغال بالفعل، اقفله الأول قبل تبدأ جديد.")
         return
@@ -46,8 +48,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👩‍🏫 اكتب اسم المعلمة:")
 
 
-# دالة جمع المعلومات الأصلية (ترد على الرسائل النصية)
-async def collect_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
@@ -94,8 +95,7 @@ async def collect_info_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(text, reply_markup=make_main_keyboard(chat_id), parse_mode="Markdown")
 
 
-# دالة الأزرار الأصلية
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     user = query.from_user
@@ -223,6 +223,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{remaining_text}"
         )
 
+        # 🧹 حذف الدور بعد القفل
         await query.message.reply_text(final_text, parse_mode="Markdown")
         del queues[chat_id]
 
@@ -271,8 +272,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                       reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 
-# دالة /forceclose الأصلية
-async def force_close_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def force_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_name = update.effective_user.full_name
 
@@ -287,22 +287,24 @@ async def force_close_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 # ----------------------------------------------------
-# 🏗️ إعداد تطبيق البوت و FastAPI
+# 🏗️ إعداد تطبيق البوت و FastAPI لـ Vercel
 # ----------------------------------------------------
 
-# بناء تطبيق البوت (الذي يحتوي على Handlers)
+# بناء تطبيق البوت (application) مرة واحدة
 application = ApplicationBuilder().token(TOKEN).build()
 
-application.add_handler(CommandHandler("start", start_handler))
-application.add_handler(CommandHandler("forceclose", force_close_handler))
-application.add_handler(CallbackQueryHandler(button_handler))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_info_handler))
+# إضافة المعالجات (Handlers)
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("forceclose", force_close))
+application.add_handler(CallbackQueryHandler(button))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_info))
 
-# تطبيق FastAPI الذي سيتعامل مع الـ Webhook
-api = FastAPI()
 
-# 🪝 مسار Webhook (المسار الافتراضي لـ Vercel هو '/')
-@api.post("/")
+# 🛑 تطبيق FastAPI الذي سيتعامل مع الـ Webhook (يجب أن يُسمى app)
+app = FastAPI()
+
+# 🪝 مسار Webhook
+@app.post("/")
 async def telegram_webhook(request: Request):
     """التعامل مع طلبات الـ Webhook الواردة من Telegram."""
     if not TOKEN:
@@ -321,6 +323,6 @@ async def telegram_webhook(request: Request):
         return {"status": "error", "message": str(e)}, 500
 
 # مسار اختبار بسيط
-@api.get("/")
+@app.get("/")
 async def index():
     return {"message": "Telegram Bot is ready to receive webhooks!"}
